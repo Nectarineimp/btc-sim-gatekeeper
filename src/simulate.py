@@ -68,7 +68,7 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
         sys.exit(1)
 
     # Parse MM/DD/YYYY format
-    df["date"] = pd.to_datetime(df["date"], format="%m/%d/%Y")
+    df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
     df = df.sort_values("date").reset_index(drop=True)
 
     # Clean numeric close
@@ -176,4 +176,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
