@@ -120,30 +120,30 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
 
         # (b) Institutional rebalancing restoration vector
         restoring_force = -kappa_rebalance * phi_t * log_deviation
-
-        # (c) Soft continuous boundary walls enforcing [-0.50, +0.30] corridor
-        upper_penalty = np.where(
-            log_deviation > upper_log_bound,
-            -4.0 * np.exp((log_deviation - upper_log_bound) * 5.0),
-            0.0,
-        )
-        lower_support = np.where(
-            log_deviation < lower_log_bound,
-            4.0 * np.exp((lower_log_bound - log_deviation) * 5.0),
-            0.0,
-        )
+        
+        # (c) Continuous cubic restoring barrier enforcing [-0.50, +0.30] corridor
+        # Replaces runaway exponentials with a stable restoring spring force
+        upper_overshoot = np.maximum(0.0, log_deviation - upper_log_bound)
+        lower_undershoot = np.maximum(0.0, lower_log_bound - log_deviation)
+        
+        upper_penalty = -2.5 * upper_overshoot - 12.0 * (upper_overshoot ** 3)
+        lower_support = 2.5 * lower_undershoot + 12.0 * (lower_undershoot ** 3)
 
         # Composite instantaneous annualized drift
         mu_t = gated_mu + restoring_force + upper_penalty + lower_support
+        
+        # Numerical guard: clamp annualized drift to realistic bounds [-200%, +200%]
+        mu_t = np.clip(mu_t, -2.0, 2.0)
 
-        # Volatility modulation: compresses in central corridor, widens under boundary friction
-        sigma_t = sigma_base * (1.0 + 0.35 * np.abs(log_deviation))
+        # Volatility modulation: bounded to prevent diffusion explosions
+        sigma_t = sigma_base * (1.0 + 0.35 * np.clip(np.abs(log_deviation), 0.0, 1.0))
 
-        # Euler-Maruyama stochastic step
+        # Euler-Maruyama stochastic step with log-exponent safety clipping
         z = np.random.standard_normal(n_sims)
-        prices[step, :] = prices[step - 1, :] * np.exp(
-            (mu_t - 0.5 * (sigma_t ** 2)) * dt + sigma_t * sqrt_dt * z
-        )
+        log_increment = (mu_t - 0.5 * (sigma_t ** 2)) * dt + sigma_t * sqrt_dt * z
+        log_increment = np.clip(log_increment, -0.5, 0.5)  # Max daily jump clamped to +/- 50%
+        
+        prices[step, :] = prices[step - 1, :] * np.exp(log_increment)
 
     # 5. Quantile Aggregation
     dates = [start_date + timedelta(days=i) for i in range(forecast_days + 1)]
