@@ -81,8 +81,11 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
 
     # 2. Econometric Parameters
     # Power-law baseline: ln(S) = a + b * ln(t)
-    a_pl = -17.0
-    b_pl = 5.8
+    # 2. Econometric Parameters
+    a_pl = -38.5
+    b_pl = 5.67
+    # OLD a_pl = -17.0
+    # OLD b_pl = 5.8
     sigma_base = 0.42          # Compressed institutional baseline annualized volatility (42%)
     dt = 1.0 / 365.0
     sqrt_dt = np.sqrt(dt)
@@ -109,7 +112,9 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
         pl_price = np.exp(a_pl + b_pl * np.log(current_day))
 
         # 8-month institutional review cycle modulation: Phi(t)
-        phi_t = 1.0 + np.cos(2.0 * np.pi * step / rebalance_period)
+        # OLD phi_t = 1.0 + np.cos(2.0 * np.pi * step / rebalance_period)
+        phi_t = 1.0 + 0.5 * np.cos(2.0 * np.pi * step / rebalance_period)
+        restoring_force = -kappa_rebalance * phi_t * log_deviation
 
         # Log-residual deviation from adoption equilibrium
         log_deviation = np.log(prices[step - 1, :]) - np.log(pl_price)
@@ -118,22 +123,23 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
         # (a) Liquidity gate
         gated_mu = 0.02 + 0.65 * max(0.0, net_liquidity_growth - tau)
 
-        # (b) Institutional rebalancing restoration vector
-        restoring_force = -kappa_rebalance * phi_t * log_deviation
-        
-        # (c) Continuous cubic restoring barrier enforcing [-0.50, +0.30] corridor
+        # (b) Continuous cubic restoring barrier enforcing [-0.50, +0.30] corridor
         # Replaces runaway exponentials with a stable restoring spring force
         upper_overshoot = np.maximum(0.0, log_deviation - upper_log_bound)
         lower_undershoot = np.maximum(0.0, lower_log_bound - log_deviation)
         
-        upper_penalty = -2.5 * upper_overshoot - 12.0 * (upper_overshoot ** 3)
-        lower_support = 2.5 * lower_undershoot + 12.0 * (lower_undershoot ** 3)
+        # OLD upper_penalty = -2.5 * upper_overshoot - 12.0 * (upper_overshoot ** 3)
+        # OLD lower_support = 2.5 * lower_undershoot + 12.0 * (lower_undershoot ** 3)
+        upper_penalty = -1.5 * upper_overshoot - 4.0 * (upper_overshoot ** 3)
+        lower_support = 1.5 * lower_undershoot + 4.0 * (lower_undershoot ** 3)
 
         # Composite instantaneous annualized drift
+        # OLD mu_t = gated_mu + restoring_force + upper_penalty + lower_support
         mu_t = gated_mu + restoring_force + upper_penalty + lower_support
         
         # Numerical guard: clamp annualized drift to realistic bounds [-200%, +200%]
-        mu_t = np.clip(mu_t, -2.0, 2.0)
+        # OLD mu_t = np.clip(mu_t, -2.0, 2.0)
+        mu_t = np.clip(mu_t, -0.35, 0.45)
 
         # Volatility modulation: bounded to prevent diffusion explosions
         sigma_t = sigma_base * (1.0 + 0.35 * np.clip(np.abs(log_deviation), 0.0, 1.0))
