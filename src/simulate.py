@@ -145,22 +145,42 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
         
         prices[step, :] = prices[step - 1, :] * np.exp(log_increment)
 
-    # 5. Quantile Aggregation
+   # 5. Monthly Low/High Quantile Aggregation
     dates = [start_date + timedelta(days=i) for i in range(forecast_days + 1)]
+    dates_pd = pd.to_datetime(dates)
+    month_periods = dates_pd.to_period("M")
+    unique_months = month_periods.unique()
 
-    quantiles = {
-        "date": [d.strftime("%Y-%m-%d") for d in dates],
-        "p05": np.percentile(prices, 5, axis=1),
-        "p16": np.percentile(prices, 16, axis=1),
-        "p50_low": np.percentile(prices, 48, axis=1),
-        "p50_high": np.percentile(prices, 52, axis=1),
-        "p84": np.percentile(prices, 84, axis=1),
-        "p95": np.percentile(prices, 95, axis=1),
-    }
+    # Exclude initial partial start month to align forward 12-month horizon
+    forecast_months = unique_months[1:13] if len(unique_months) > 12 else unique_months[1:]
 
-    out_df = pd.DataFrame(quantiles)
+    records = []
+    for m in forecast_months:
+        mask = (month_periods == m)
+        # prices shape: (days + 1, n_sims) -> slice month days
+        month_prices = prices[mask, :]
+
+        # Path-wise monthly extrema across all simulated runs
+        path_lows = np.min(month_prices, axis=0)
+        path_highs = np.max(month_prices, axis=0)
+
+        records.append({
+            "Month": str(m),
+            "Low_p05": np.percentile(path_lows, 5),
+            "Low_p16": np.percentile(path_lows, 16),
+            "Low_p50": np.percentile(path_lows, 50),
+            "Low_p84": np.percentile(path_lows, 84),
+            "Low_p95": np.percentile(path_lows, 95),
+            "High_p05": np.percentile(path_highs, 5),
+            "High_p16": np.percentile(path_highs, 16),
+            "High_p50": np.percentile(path_highs, 50),
+            "High_p84": np.percentile(path_highs, 84),
+            "High_p95": np.percentile(path_highs, 95),
+        })
+
+    out_df = pd.DataFrame(records)
     out_df.to_csv(output_path, index=False)
-    print(f"GateKeeper forecast generated successfully: {output_path} ({n_sims} iterations)")
+    print(f"GateKeeper forecast generated successfully: {output_path} ({n_sims} iterations across {len(records)} months)")
 
 
 def main():
