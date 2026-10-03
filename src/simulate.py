@@ -79,79 +79,82 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
     genesis_date = pd.to_datetime("2009-01-03")
     t0_days = (start_date - genesis_date).days
 
+    # ------------------------------------------------------------
     # 2. Econometric Parameters
-    # Power-law baseline: ln(S) = a + b * ln(t)
-    # 2. Econometric Parameters
-    a_pl = -38.5
-    b_pl = 5.67
-    # OLD a_pl = -17.0
-    # OLD b_pl = 5.8
+    # ------------------------------------------------------------
+    # Dynamic power-law trajectory anchored to spot start date:
+    # S_PL(t) = S_0 * (t / t_0)^beta_pl
+    beta_pl = 5.67
     sigma_base = 0.42          # Compressed institutional baseline annualized volatility (42%)
     dt = 1.0 / 365.0
     sqrt_dt = np.sqrt(dt)
 
+    # ------------------------------------------------------------
     # Institutional Mandate Rebalancing Parameters
+    # ------------------------------------------------------------
     rebalance_period = 240.0   # 8-month harmonic institutional rebalancing mode (~240 days)
-    kappa_rebalance = 0.85     # Mean-reverting restoration elasticity
+    kappa_rebalance = 1.20     # Mean-reverting restoration elasticity
     upper_log_bound = 0.30     # Cycle performance upper ceiling (+0.30 log units)
     lower_log_bound = -0.50    # Cycle performance lower floor (-0.50 log units)
 
+    # ------------------------------------------------------------
     # Macro Liquidity Gate Parameters
+    # ------------------------------------------------------------
     net_liquidity_growth = 0.015  # Baseline neutral liquidity regime
     tau = 0.020                  # Liquidity activation threshold
 
+    # ------------------------------------------------------------
     # 3. Path Pre-allocation (days + 1, n_sims)
+    # ------------------------------------------------------------
     prices = np.empty((forecast_days + 1, n_sims), dtype=np.float64)
     prices[0, :] = s0
 
+    # ------------------------------------------------------------
     # 4. Simulation Engine (Vectorized across all paths per daily time step)
+    # ------------------------------------------------------------
     for step in range(1, forecast_days + 1):
         current_day = t0_days + step
 
-        # Power-law anchor value for day t
-        pl_price = np.exp(a_pl + b_pl * np.log(current_day))
+        # Dynamically anchored Power-Law benchmark
+        pl_price = s0 * ((current_day / t0_days) ** beta_pl)
 
-        # 8-month institutional review cycle modulation: Phi(t)
-        # OLD phi_t = 1.0 + np.cos(2.0 * np.pi * step / rebalance_period)
+        # 1. Compute Log-residual deviation FIRST
+        log_deviation = np.log(prices[step - 1, :] / pl_price)
+
+        # 2. 8-month institutional review cycle modulation: Phi(t)
         phi_t = 1.0 + 0.5 * np.cos(2.0 * np.pi * step / rebalance_period)
         restoring_force = -kappa_rebalance * phi_t * log_deviation
 
-        # Log-residual deviation from adoption equilibrium
-        log_deviation = np.log(prices[step - 1, :]) - np.log(pl_price)
-
-        # State-dependent drift calculations:
+        # 3. State-dependent drift calculations:
         # (a) Liquidity gate
-        gated_mu = 0.02 + 0.65 * max(0.0, net_liquidity_growth - tau)
+        gated_mu = 0.01 + 0.40 * max(0.0, net_liquidity_growth - tau)
 
         # (b) Continuous cubic restoring barrier enforcing [-0.50, +0.30] corridor
-        # Replaces runaway exponentials with a stable restoring spring force
         upper_overshoot = np.maximum(0.0, log_deviation - upper_log_bound)
         lower_undershoot = np.maximum(0.0, lower_log_bound - log_deviation)
         
-        # OLD upper_penalty = -2.5 * upper_overshoot - 12.0 * (upper_overshoot ** 3)
-        # OLD lower_support = 2.5 * lower_undershoot + 12.0 * (lower_undershoot ** 3)
-        upper_penalty = -1.5 * upper_overshoot - 4.0 * (upper_overshoot ** 3)
-        lower_support = 1.5 * lower_undershoot + 4.0 * (lower_undershoot ** 3)
+        upper_penalty = -2.0 * upper_overshoot - 8.0 * (upper_overshoot ** 3)
+        lower_support = 2.0 * lower_undershoot + 8.0 * (lower_undershoot ** 3)
 
         # Composite instantaneous annualized drift
-        # OLD mu_t = gated_mu + restoring_force + upper_penalty + lower_support
         mu_t = gated_mu + restoring_force + upper_penalty + lower_support
         
-        # Numerical guard: clamp annualized drift to realistic bounds [-200%, +200%]
-        # OLD mu_t = np.clip(mu_t, -2.0, 2.0)
-        mu_t = np.clip(mu_t, -0.35, 0.45)
+        # Clamp annualized drift to realistic institutional bounds [-30%, +35%]
+        mu_t = np.clip(mu_t, -0.30, 0.35)
 
-        # Volatility modulation: bounded to prevent diffusion explosions
-        sigma_t = sigma_base * (1.0 + 0.35 * np.clip(np.abs(log_deviation), 0.0, 1.0))
+        # Volatility modulation: compressed in corridor, widens slightly near extremes
+        sigma_t = sigma_base * (1.0 + 0.25 * np.clip(np.abs(log_deviation), 0.0, 1.0))
 
         # Euler-Maruyama stochastic step with log-exponent safety clipping
         z = np.random.standard_normal(n_sims)
         log_increment = (mu_t - 0.5 * (sigma_t ** 2)) * dt + sigma_t * sqrt_dt * z
-        log_increment = np.clip(log_increment, -0.5, 0.5)  # Max daily jump clamped to +/- 50%
+        log_increment = np.clip(log_increment, -0.15, 0.15)  # Daily move clamped to realistic +/- 15%
         
         prices[step, :] = prices[step - 1, :] * np.exp(log_increment)
 
-   # 5. Monthly Low/High Quantile Aggregation
+    # ------------------------------------------------------------
+    # 5. Monthly Low/High Quantile Aggregation
+    # ------------------------------------------------------------
     dates = [start_date + timedelta(days=i) for i in range(forecast_days + 1)]
     dates_pd = pd.to_datetime(dates)
     month_periods = dates_pd.to_period("M")
