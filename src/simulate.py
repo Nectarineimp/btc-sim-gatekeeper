@@ -160,8 +160,8 @@ def run_simulation(data_path, output_path, n_sims, forecast_days, seed):
     month_periods = dates_pd.to_period("M")
     unique_months = month_periods.unique()
 
-    # Exclude initial partial start month to align forward 12-month horizon
-    forecast_months = unique_months[1:13] if len(unique_months) > 12 else unique_months[1:]
+    # Align forward 12-month window with RegimeEcho/EchoPhase (starting with current month)
+    forecast_months = unique_months[:12]
 
     records = []
     for m in forecast_months:
